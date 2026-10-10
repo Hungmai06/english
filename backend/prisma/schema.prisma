@@ -1,0 +1,359 @@
+// Prisma Schema based on English Learning Platform Database Specification (Sections 22 - 26)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STUDENT
+  INSTRUCTOR
+  CONTENT_CREATOR
+  ADMIN
+}
+
+enum ModuleKey {
+  GRAMMAR
+  VOCABULARY
+  READING
+  LISTENING
+  SPEAKING
+  WRITING
+  TOEIC
+}
+
+enum DifficultyLevel {
+  BEGINNER_A1
+  ELEMENTARY_A2
+  INTERMEDIATE_B1
+  UPPER_INTERMEDIATE_B2
+  ADVANCED_C1
+  PROFICIENT_C2
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  MULTIPLE_SELECT
+  FILL_IN_BLANK
+  SENTENCE_ORDERING
+  MATCHING
+  SENTENCE_CORRECTION
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  passwordHash String
+  displayName  String
+  role         Role          @default(STUDENT)
+  avatarUrl    String?
+  streakDays   Int           @default(0)
+  totalXP      Int           @default(0)
+  currentLevel Int           @default(1)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  progress     UserProgress[]
+  mistakes     UserMistake[]
+  bookmarks    UserBookmark[]
+  sessions     PracticeSession[]
+  examAttempts ExamAttempt[]
+  userVocabs   UserVocabulary[]
+
+  @@map("users")
+}
+
+model Module {
+  id          String       @id @default(uuid())
+  key         ModuleKey    @unique
+  name        String
+  slug        String       @unique
+  description String
+  tone        String       @default("blue")
+  orderIndex  Int          @default(0)
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  categories  Category[]
+  questions   Question[]
+
+  @@map("modules")
+}
+
+model Category {
+  id          String       @id @default(uuid())
+  moduleId    String
+  name        String
+  slug        String
+  description String?
+  orderIndex  Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  module      Module       @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  topics      Topic[]
+
+  @@unique([moduleId, slug])
+  @@map("categories")
+}
+
+model Topic {
+  id               String          @id @default(uuid())
+  categoryId       String
+  title            String
+  slug             String
+  summary          String
+  level            DifficultyLevel @default(BEGINNER_A1)
+  estimatedMinutes Int             @default(20)
+  orderIndex       Int             @default(0)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  category         Category        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  lessons          Lesson[]
+  questions        Question[]
+
+  @@unique([categoryId, slug])
+  @@map("topics")
+}
+
+model Lesson {
+  id               String          @id @default(uuid())
+  topicId          String
+  title            String
+  slug             String
+  orderIndex       Int             @default(0)
+  level            DifficultyLevel @default(BEGINNER_A1)
+  readTimeMinutes  Int             @default(5)
+  introduction     String          @db.Text
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  topic            Topic           @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  sections         LessonSection[]
+  questions        Question[]
+  userProgress     UserProgress[]
+
+  @@unique([topicId, slug])
+  @@map("lessons")
+}
+
+model LessonSection {
+  id           String   @id @default(uuid())
+  lessonId     String
+  type         String   // THEORY, RULES, EXAMPLES, COMMON_MISTAKES, QUICK_CHECK
+  title        String
+  contentJson  Json     // Structured rich payload
+  orderIndex   Int      @default(0)
+
+  lesson       Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@map("lesson_sections")
+}
+
+model Question {
+  id             String         @id @default(uuid())
+  moduleId       String
+  topicId        String?
+  lessonId       String?
+  type           QuestionType   @default(MULTIPLE_CHOICE)
+  prompt         String         @db.Text
+  instruction    String?
+  difficulty     String         @default("medium")
+  explanation    String         @db.Text
+  ruleReference  String?
+  underlinedWord String?
+  payloadJson    Json?          // Options, matchingPairs, scrambledWords
+  correctAnswer  String         // Correct option ID or text or JSON array
+  createdAt      DateTime       @default(now())
+
+  module         Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  topic          Topic?         @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  lesson         Lesson?        @relation(fields: [lessonId], references: [id], onDelete: SetNull)
+  attemptAnswers AttemptAnswer[]
+  userMistakes   UserMistake[]
+  userBookmarks  UserBookmark[]
+
+  @@map("questions")
+}
+
+model PracticeSession {
+  id               String          @id @default(uuid())
+  userId           String
+  title            String
+  startedAt        DateTime        @default(now())
+  completedAt      DateTime?
+  scorePercent     Int?
+  xpEarned         Int             @default(0)
+
+  user             User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers          AttemptAnswer[]
+
+  @@map("practice_sessions")
+}
+
+model AttemptAnswer {
+  id             String          @id @default(uuid())
+  sessionId      String
+  questionId     String
+  userAnswer     String
+  isCorrect      Boolean
+  timeSpentSec   Int             @default(0)
+  answeredAt     DateTime        @default(now())
+
+  session        PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  question       Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("attempt_answers")
+}
+
+model VocabularyEntry {
+  id               String          @id @default(uuid())
+  lemma            String
+  normalizedLemma  String          @unique // Section 101.18 Deduplication constraint
+  ipa              String
+  level            DifficultyLevel @default(INTERMEDIATE_B1)
+  createdAt        DateTime        @default(now())
+
+  senses           VocabularySense[]
+  collectionItems  VocabularyCollectionItem[]
+  userVocabs       UserVocabulary[]
+
+  @@index([normalizedLemma])
+  @@map("vocabulary_entries")
+}
+
+model VocabularySense {
+  id                 String          @id @default(uuid())
+  vocabularyEntryId  String
+  partOfSpeech       String          // noun, verb, adjective, etc.
+  definition         String          @db.Text
+  vietnameseMeaning  String          @db.Text
+  collocationsJson   Json?
+  examplesJson       Json?
+
+  entry              VocabularyEntry @relation(fields: [vocabularyEntryId], references: [id], onDelete: Cascade)
+
+  @@map("vocabulary_senses")
+}
+
+model VocabularyCollection {
+  id          String   @id @default(uuid())
+  title       String
+  slug        String   @unique
+  description String
+  icon        String   @default("BookOpen")
+  category    String   @default("General")
+
+  items       VocabularyCollectionItem[]
+
+  @@map("vocabulary_collections")
+}
+
+model VocabularyCollectionItem {
+  collectionId       String
+  vocabularyEntryId  String
+
+  collection         VocabularyCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  entry              VocabularyEntry      @relation(fields: [vocabularyEntryId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, vocabularyEntryId])
+  @@map("vocabulary_collection_items")
+}
+
+model UserVocabulary {
+  userId             String
+  vocabularyEntryId  String
+  isMastered         Boolean         @default(false)
+  reviewIntervalDays Int             @default(1)
+  nextReviewAt       DateTime        @default(now())
+
+  user               User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entry              VocabularyEntry @relation(fields: [vocabularyEntryId], references: [id], onDelete: Cascade)
+
+  @@id([userId, vocabularyEntryId])
+  @@map("user_vocabulary")
+}
+
+model Exam {
+  id               String          @id @default(uuid())
+  title            String
+  slug             String          @unique
+  type             String          // GRAMMAR_BENCHMARK, TOEIC_PART5, PLACEMENT
+  description      String
+  durationMinutes  Int             @default(20)
+  totalQuestions   Int             @default(10)
+  passingScore     Int             @default(70)
+
+  attempts         ExamAttempt[]
+
+  @@map("exams")
+}
+
+model ExamAttempt {
+  id             String          @id @default(uuid())
+  examId         String
+  userId         String
+  scorePercent   Int
+  isPassed       Boolean
+  answersJson    Json
+  startedAt      DateTime        @default(now())
+  submittedAt    DateTime        @default(now())
+
+  exam           Exam            @relation(fields: [examId], references: [id], onDelete: Cascade)
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("exam_attempts")
+}
+
+model UserMistake {
+  id              String         @id @default(uuid())
+  userId          String
+  questionId      String
+  lastGivenAnswer String
+  correctAnswer   String
+  failedCount     Int            @default(1)
+  correctedCount  Int            @default(0)
+  status          String         @default("NEEDS_REVIEW") // NEEDS_REVIEW, MASTERED
+  lastAttemptedAt DateTime       @default(now())
+
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question        Question       @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@map("user_mistakes")
+}
+
+model UserBookmark {
+  id          String   @id @default(uuid())
+  userId      String
+  questionId  String?
+  targetType  String   // QUESTION, VOCABULARY, LESSON
+  targetId    String
+  createdAt   DateTime @default(now())
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  question    Question? @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("user_bookmarks")
+}
+
+model UserProgress {
+  id           String   @id @default(uuid())
+  userId       String
+  lessonId     String
+  isCompleted  Boolean  @default(false)
+  scorePercent Int      @default(0)
+  completedAt  DateTime?
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lesson       Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@map("user_progress")
+}
